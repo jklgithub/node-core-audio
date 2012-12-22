@@ -5,6 +5,7 @@
 #pragma once
 #include "portaudio.h"
 #include <v8.h>
+#include <uv.h>
 #include <vector>
 #include <node_internals.h>
 #include <node_object_wrap.h>
@@ -44,7 +45,8 @@ namespace Audio {
         static v8::Handle<v8::Value> GetOptions( const v8::Arguments& args );
 
         static void* streamThread(void *p);
-        static int callCallback(eio_req *req);
+        static void processCallback(uv_work_t *req);
+        static void afterProcessCallback(uv_work_t *req);
 
         void applyOptions( Local<Object> options );
 
@@ -67,17 +69,6 @@ namespace Audio {
         PaStreamParameters inputParameters,
                            outputParameters;
 
-        /**
-         * The id of the streamThread thread.
-         */
-        pthread_t ptStreamThread;
-
-        /**
-         * The mutex that detects whether the v8 javascript callback function is done or not.
-         * Since the v8 callback and the streamThread are in different threads, this is needed
-         * to be synchronized.
-         */
-        pthread_mutex_t callerThreadSamplesAccess;
 
         /**
          * Stores the v8 javascript callback function.

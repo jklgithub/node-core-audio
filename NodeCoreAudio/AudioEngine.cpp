@@ -9,7 +9,6 @@
 #include <v8.h>
 #include <node_internals.h>
 #include <node_object_wrap.h>
-#include <pthread.h>
 #include <stdlib.h>
 using namespace v8;
 
@@ -67,9 +66,6 @@ Audio::AudioEngine::AudioEngine( Local<Function>& callback, Local<Object> option
     fprintf(stderr, "inputChannels :%d\n", inputChannels);
     fprintf(stderr, "outputChannels :%d\n", outputChannels);
     fprintf(stderr, "interleaved :%d\n", interleaved);
-    
-
-    pthread_mutex_init(&callerThreadSamplesAccess, NULL);
 
     // Open an audio I/O stream. 
     openStreamErr = Pa_OpenStream(  &paStream,
@@ -89,10 +85,6 @@ Audio::AudioEngine::AudioEngine( Local<Function>& callback, Local<Object> option
 
     if( startStreamErr != paNoError ) 
         ThrowException( Exception::TypeError(String::New("Failed to start audio stream")) );
-
-    if (withThread)
-        pthread_create(&ptStreamThread, NULL, Audio::AudioEngine::streamThread, this);
-
 } // end Constructor
 
 
@@ -216,7 +208,7 @@ void Audio::AudioEngine::applyOptions( Local<Object> options ){
 /**
  * Prepares the input/output buffers and calls the javascript callback.
  */
-int Audio::AudioEngine::callCallback(eio_req *req){
+void Audio::AudioEngine::processCallback(uv_work_t *req){
     HandleScope scope;
 
     AudioEngine* engine = ((AudioEngine*)req->data);
@@ -235,10 +227,15 @@ int Audio::AudioEngine::callCallback(eio_req *req){
         engine->queueOutputBuffer(result);
     }
     
-    pthread_mutex_unlock(&engine->callerThreadSamplesAccess);
+} // end processCallback
+
+
+/**
+ * Called after we've returned from processing on another thread
+ */
+void Audio::AudioEngine::afterProcessCallback(uv_work_t *req){
     
-    return 0;
-} // end callCallback
+} // end afterProcessCallback
 
 
 /**
@@ -407,15 +404,24 @@ void* Audio::AudioEngine::streamThread(void *pEngine){
     AudioEngine* engine = ((AudioEngine*)pEngine);
     PaError err;
 
-    while(1){
+    while(1) {
 
         err = Pa_ReadStream(engine->paStream, engine->cachedInputSampleBlock, engine->framesPerBuffer);
 
         engine->inputOverflowed = (err != paNoError);
 
-        pthread_mutex_trylock(&engine->callerThreadSamplesAccess);
-        eio_nop(EIO_PRI_DEFAULT, callCallback, pEngine); //call into the v8 thread
-        pthread_mutex_lock(&engine->callerThreadSamplesAccess); //wait, untill js call is done
+		/*
+		uv_loop_t* pDefaultLoop = uv_default_loop();
+
+		uv_work_t req[1];
+
+		req[0].data = (void *) &engine;
+		uv_queue_work(pDefaultLoop, &req[0], processCallback, afterProcessCallback );
+		*/
+
+//        pthread_mutex_trylock(&engine->callerThreadSamplesAccess);
+//        eio_nop(EIO_PRI_DEFAULT, callCallback, pEngine); //call into the v8 thread
+//        pthread_mutex_lock(&engine->callerThreadSamplesAccess); //wait, untill js call is done
 
         if (engine->cachedOutputSamplesLength > 0){
             err = Pa_WriteStream(engine->paStream, engine->cachedOutputSampleBlock, engine->cachedOutputSamplesLength);
